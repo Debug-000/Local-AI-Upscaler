@@ -1,0 +1,4 @@
+Pillow>=10.0.0
+
+# For the real AI pipeline, also install:
+# pip install -r requirements-ai.txt
