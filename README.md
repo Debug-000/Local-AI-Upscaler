@@ -47,7 +47,7 @@ sudo apt install python3-venv
 Clone the repository and enter the project folder:
 
 ```bash
-git clone <your-repo-url>
+git clone (https://github.com/Debug-000/Local-AI-Upscaler.git)
 cd image-upscaler
 ```
 
