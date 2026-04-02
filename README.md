@@ -35,6 +35,7 @@ Before running the app, make sure you have:
 - `pip`
 - enough disk space for model weights
 - enough RAM / VRAM for the image sizes you want to upscale
+- a GPU is recommended for faster Real-ESRGAN / GFPGAN processing, but CPU-only mode can still work
 
 On Debian or Ubuntu, if virtual environments are missing:
 
@@ -126,14 +127,31 @@ python main.py
 
 The app writes output files into the selected output folder and never overwrites the original source name. If a target filename already exists, a numeric suffix is added automatically.
 
+
+## Performance notes
+
+Preview generation is not a fake placeholder. The app runs real image processing to build the preview, so preview speed depends on your hardware.
+
+Things that affect speed:
+
+- GPU vs CPU: a compatible GPU is much faster than CPU-only processing
+- image size: larger images take longer
+- scale: `4x` is slower than `2x`
+- face restoration: enabling `GFPGAN` adds more processing time
+- memory: limited RAM / VRAM can slow things down or cause failures on large images
+
+If the app feels slow, try `2x` first and disable `Restore faces with GFPGAN` while testing.
+
 ## Troubleshooting
 
 If the AI backend fails:
 
 - verify the model files exist in `models/`
 - verify the AI packages are installed in `.venv`
+- if you launch the app with system `python3`, make sure the project `.venv` is set up because the app may hand AI work off to that environment
 - try disabling `Restore faces with GFPGAN` first to isolate face-restoration issues
 - large images may require more RAM / VRAM
+- CPU-only systems will be much slower than systems with a compatible GPU
 
 If the app falls back to Pillow:
 
@@ -151,7 +169,7 @@ If the app falls back to Pillow:
 
 ## License
 
-This project is licensed under the MIT License. See [LICENSE](/home/debug/Desktop/image-upscaler/LICENSE).
+This project is licensed under the MIT License. See [LICENSE](LICENSE).
 
 ## Credits
 

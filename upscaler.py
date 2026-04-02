@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import json
+import os
 import shutil
+import subprocess
 import sys
 import types
 from dataclasses import dataclass
@@ -84,7 +87,8 @@ def list_missing_gfpgan_bits(model_dir: Path) -> list[str]:
 
 class ImageUpscaler:
     def __init__(self, model_dir: Path | None = None) -> None:
-        self.model_dir = model_dir or Path(__file__).resolve().parent / "models"
+        self.project_root = Path(__file__).resolve().parent
+        self.model_dir = model_dir or self.project_root / "models"
 
     def upscale_image(
         self,
@@ -164,6 +168,19 @@ class ImageUpscaler:
 
         real_esrgan_errors = list_missing_real_esrgan_bits(scale, self.model_dir)
         gfpgan_errors = list_missing_gfpgan_bits(self.model_dir) if face_restore else []
+
+        if require_ai and (real_esrgan_errors or gfpgan_errors):
+            helper_python = self._find_helper_python()
+            if helper_python is not None:
+                return self._run_in_helper_python(
+                    helper_python=helper_python,
+                    input_path=input_path,
+                    output_path=output_path,
+                    scale=scale,
+                    enhancement=enhancement,
+                    face_restore=face_restore,
+                    require_ai=require_ai,
+                )
 
         if face_restore and not gfpgan_errors and not real_esrgan_errors:
             try:
@@ -387,6 +404,110 @@ class ImageUpscaler:
                 lines.append(f"- {item}")
         lines.append("Uncheck 'Require AI backend' in the app if you want basic resize fallback.")
         return "\n".join(lines)
+
+
+    def _find_helper_python(self) -> Path | None:
+        if os.environ.get("UPSCALER_SUBPROCESS") == "1":
+            return None
+
+        expected_prefixes = [
+            self.project_root / ".venv",
+            self.project_root / ".venv" / "Scripts",
+        ]
+        current_prefix = Path(sys.prefix).resolve()
+        if any(prefix.exists() and current_prefix == prefix.resolve() for prefix in expected_prefixes):
+            return None
+
+        candidates = [
+            self.project_root / ".venv" / "bin" / "python",
+            self.project_root / ".venv" / "Scripts" / "python.exe",
+        ]
+        for candidate in candidates:
+            if candidate.exists():
+                return candidate
+
+        return None
+
+    def _run_in_helper_python(
+        self,
+        helper_python: Path,
+        input_path: Path,
+        output_path: Path,
+        scale: int,
+        enhancement: str,
+        face_restore: bool,
+        require_ai: bool,
+    ) -> UpscaleResult:
+        env = os.environ.copy()
+        env["UPSCALER_SUBPROCESS"] = "1"
+
+        helper_script = """
+import json
+from pathlib import Path
+from upscaler import ImageUpscaler
+
+result = ImageUpscaler().upscale_to_path(
+    input_path=Path({input_path!r}),
+    output_path=Path({output_path!r}),
+    scale={scale},
+    enhancement={enhancement!r},
+    face_restore={face_restore!r},
+    require_ai={require_ai!r},
+)
+print(json.dumps({{
+    "input_path": str(result.input_path),
+    "output_path": str(result.output_path),
+    "scale": result.scale,
+    "enhancement": result.enhancement,
+    "face_restored": result.face_restored,
+    "original_size": list(result.original_size),
+    "output_size": list(result.output_size),
+    "engine": result.engine,
+}}))
+""".format(
+            input_path=str(input_path),
+            output_path=str(output_path),
+            scale=scale,
+            enhancement=enhancement,
+            face_restore=face_restore,
+            require_ai=require_ai,
+        )
+
+        completed = subprocess.run(
+            [str(helper_python), "-c", helper_script],
+            cwd=str(self.project_root),
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        if completed.returncode != 0:
+            stderr = completed.stderr.strip() or completed.stdout.strip() or "Unknown AI helper failure."
+            raise UpscalerError(f"AI helper runtime failed: {stderr}")
+
+        lines = [line for line in completed.stdout.splitlines() if line.strip()]
+        try:
+            payload = json.loads(lines[-1])
+        except (json.JSONDecodeError, IndexError) as exc:
+            raise UpscalerError("AI helper returned an invalid response.") from exc
+
+        return UpscaleResult(
+            input_path=Path(payload["input_path"]),
+            output_path=Path(payload["output_path"]),
+            scale=int(payload["scale"]),
+            enhancement=str(payload["enhancement"]),
+            face_restored=bool(payload["face_restored"]),
+            original_size=(
+                int(payload["original_size"][0]),
+                int(payload["original_size"][1]),
+            ),
+            output_size=(
+                int(payload["output_size"][0]),
+                int(payload["output_size"][1]),
+            ),
+            engine=str(payload["engine"]),
+        )
 
 
 def _ensure_torchvision_compat() -> None:
